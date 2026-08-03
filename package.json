@@ -1,0 +1,27 @@
+{
+  "name": "clipforge",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,worker,web -c magenta,cyan,blue \"pnpm --filter @clipforge/backend dev\" \"pnpm --filter @clipforge/backend dev:worker\" \"pnpm --filter @clipforge/frontend dev\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @clipforge/backend prisma migrate dev",
+    "db:deploy": "pnpm --filter @clipforge/backend prisma migrate deploy",
+    "db:seed": "pnpm --filter @clipforge/backend seed",
+    "db:setup": "pnpm db:migrate && pnpm db:seed",
+    "db:studio": "pnpm --filter @clipforge/backend prisma studio",
+    "db:reset": "pnpm --filter @clipforge/backend prisma migrate reset --force"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Tokens — ver docs/13-design-system.md */
+    --bg: 240 10% 2.4%;
+    --surface: 240 10% 4.3%;
+    --surface-2: 240 9% 6.5%;
+    --surface-3: 240 8% 9%;
+
+    --border: 240 6% 100% / 0.07;
+    --border-strong: 240 6% 100% / 0.14;
+
+    --fg: 240 20% 94%;
+    --fg-muted: 240 6% 58%;
+    --fg-subtle: 240 5% 40%;
+
+    --violet: 258 90% 66%;
+    --violet-glow: 255 92% 76%;
+    --blue: 217 91% 60%;
+    --cyan: 187 85% 53%;
+
+    --success: 160 84% 39%;
+    --warn: 38 92% 50%;
+    --danger: 0 84% 60%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    /* Scroll suave nativo — sem biblioteca, sem custo de JS. */
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Números em métricas nunca devem "dançar" ao atualizar. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: hsl(var(--violet) / 0.3);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--violet));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(240 6% 100% / 0.08);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 6% 100% / 0.16);
+    background-clip: content-box;
+  }
+
+  /* Acessibilidade: quem pediu menos movimento recebe menos movimento. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Glass só em elemento flutuante: em card de conteúdo custa GPU e some com o texto. */
+  .glass {
+    background: hsl(var(--surface) / 0.72);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+  }
+
+  .panel {
+    @apply rounded-xl border bg-surface shadow-raised;
+  }
+
+  .hairline {
+    background: linear-gradient(90deg, transparent, hsl(var(--border-strong)), transparent);
+  }
+
+  /* Skeleton com varredura de luz — comunica "carregando", não "quebrado". */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-surface-2;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.045), transparent);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, hsl(var(--fg)) 20%, hsl(var(--violet-glow)) 60%, hsl(var(--cyan)) 100%);
+  }
+
+  /* Malha de fundo: 1 px de linha a 3% de opacidade. Dá profundidade sem ruído. */
+  .grid-bg {
+    background-image:
+      linear-gradient(hsl(0 0% 100% / 0.022) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(0 0% 100% / 0.022) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+}

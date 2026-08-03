@@ -1,0 +1,563 @@
+// ClipForge — schema de dados
+// Convenções:
+//  · IDs cuid(2): curtos, ordenáveis por tempo, não vazam contagem
+//  · Tempos de mídia sempre em MILISSEGUNDOS inteiros (nunca float de segundos)
+//  · JSONB para payloads que evoluem rápido; colunas materializadas para o que é filtrado
+//  · Todo índice aqui existe por causa de uma query real, documentada em docs/03-database.md
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins", "metrics"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────── identity ──
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+model User {
+  id         String   @id @default(cuid())
+  // id do Supabase Auth — a fonte da verdade de autenticação vive lá
+  authId     String   @unique
+  email      String   @unique
+  name       String?
+  avatarUrl  String?
+  role       UserRole @default(USER)
+  locale     String   @default("pt-BR")
+
+  plan             PlanTier  @default(FREE)
+  planRenewsAt     DateTime?
+  stripeCustomerId String?   @unique
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lastSeenAt DateTime?
+
+  projects     Project[]
+  exports      Export[]
+  ledger       CreditLedger[]
+  apiKeys      ApiKey[]
+  webhooks     WebhookEndpoint[]
+  feedback     ClipFeedback[]
+
+  @@index([plan])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  // apenas o hash é persistido; o segredo é mostrado uma única vez
+  hashedKey  String    @unique
+  prefix     String
+  scopes     String[]  @default([])
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────── projects ──
+
+enum ProjectSource {
+  YOUTUBE
+  TWITCH
+  UPLOAD
+}
+
+enum ProjectStatus {
+  DRAFT
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+  CANCELLED
+}
+
+model Project {
+  id     String @id @default(cuid())
+  userId String
+
+  title       String
+  description String?
+  source      ProjectSource
+  sourceUrl   String?
+  // id externo (vídeo do YouTube, VOD da Twitch) — permite deduplicar
+  externalId  String?
+
+  status       ProjectStatus @default(DRAFT)
+  failureCode  String?
+  failureHint  String?
+
+  // preferências de geração congeladas no momento da criação:
+  // reprocessar precisa reproduzir exatamente o mesmo resultado
+  preferences Json @default("{}")
+
+  // agregados desnormalizados: evitam COUNT/AVG a cada render do dashboard
+  clipCount       Int   @default(0)
+  averageScore    Float @default(0)
+  bestScore       Float @default(0)
+  secondsSaved    Int   @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+  deletedAt   DateTime?
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media       MediaAsset[]
+  transcript  Transcript?
+  pipelineRun PipelineRun?
+  clips       Clip[]
+  scorePoints ScorePoint[]
+  analyses    AnalysisResult[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([userId, status])
+  @@index([externalId])
+}
+
+// ────────────────────────────────────────────────────────────────── media ──
+
+enum MediaKind {
+  SOURCE_VIDEO
+  AUDIO_WAV
+  WAVEFORM
+  THUMBNAIL
+  CLIP_PREVIEW
+  EXPORT
+}
+
+model MediaAsset {
+  id        String    @id @default(cuid())
+  projectId String
+  kind      MediaKind
+
+  // chave no bucket, sempre prefixada por userId — isolamento por tenant
+  storageKey String  @unique
+  mimeType   String
+  sizeBytes  BigInt
+
+  durationMs Int?
+  width      Int?
+  height     Int?
+  fps        Float?
+  videoCodec String?
+  audioCodec String?
+  bitrate    Int?
+
+  // metadados brutos do ffprobe, guardados para diagnóstico
+  probe Json?
+
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, kind])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────── pipeline ──
+
+enum StageStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model PipelineRun {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  status       StageStatus @default(PENDING)
+  progress     Float       @default(0)
+  currentStage String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  // custo de IA em centavos de dólar — alimenta o painel de margem
+  aiCostCents Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stages  PipelineStage[]
+}
+
+model PipelineStage {
+  id            String @id @default(cuid())
+  pipelineRunId String
+
+  key      String // 'download' | 'transcribe' | ...
+  label    String
+  order     Int
+  status   StageStatus @default(PENDING)
+  progress Float       @default(0)
+
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  durationMs  Int?
+  attempts    Int       @default(0)
+  errorCode   String?
+  errorMessage String?
+  // linhas de log já simplificadas para exibição ao usuário
+  logs        Json      @default("[]")
+
+  run PipelineRun @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  @@unique([pipelineRunId, key])
+  @@index([pipelineRunId, order])
+}
+
+// ─────────────────────────────────────────────────────────── intelligence ──
+
+model Transcript {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  provider   String // 'openai-whisper' | 'faster-whisper' | 'deepgram' | ...
+  model      String
+  language   String
+  confidence Float  @default(0)
+  text       String @db.Text
+
+  durationMs   Int
+  wordCount    Int   @default(0)
+  costCents    Int   @default(0)
+
+  createdAt DateTime @default(now())
+
+  project  Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  segments TranscriptSegment[]
+}
+
+model TranscriptSegment {
+  id           String @id @default(cuid())
+  transcriptId String
+
+  index      Int
+  startMs    Int
+  endMs      Int
+  text       String @db.Text
+  confidence Float  @default(0)
+  speaker    String?
+
+  // [{ w: 'palavra', s: 1200, e: 1450, c: 0.98 }] — usado nas legendas palavra a palavra
+  words Json @default("[]")
+
+  transcript Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@unique([transcriptId, index])
+  @@index([transcriptId, startMs])
+}
+
+enum AnalysisKind {
+  AUDIO
+  VISUAL
+  SEMANTIC
+}
+
+model AnalysisResult {
+  id        String       @id @default(cuid())
+  projectId String
+  kind      AnalysisKind
+
+  provider String
+  model    String?
+  version  String  @default("1")
+
+  // payload específico do analisador; o formato é validado por Zod na aplicação
+  payload   Json
+  costCents Int  @default(0)
+
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, kind, version])
+}
+
+/// Curva de score amostrada (padrão: 1 ponto por segundo).
+/// Alimenta a timeline e a seleção de janelas de corte.
+model ScorePoint {
+  id        String @id @default(cuid())
+  projectId String
+
+  timeMs Int
+  score  Float
+
+  // contribuição de cada sinal — permite explicar "por que" um trecho foi escolhido
+  emotion   Float @default(0)
+  energy    Float @default(0)
+  humor     Float @default(0)
+  hook      Float @default(0)
+  novelty   Float @default(0)
+  visual    Float @default(0)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, timeMs])
+  @@index([projectId, score(sort: Desc)])
+}
+
+// ────────────────────────────────────────────────────────────────── clips ──
+
+enum ClipCategory {
+  FUNNY
+  EDUCATIONAL
+  EMOTIONAL
+  SHOCKING
+  GAMEPLAY
+  RAGE
+  FAIL
+  WIN
+  REACTION
+  STORY
+  HOT_TAKE
+  OTHER
+}
+
+model Clip {
+  id        String @id @default(cuid())
+  projectId String
+
+  startMs    Int
+  endMs      Int
+  durationMs Int
+
+  title       String
+  altTitles   String[]     @default([])
+  description String?      @db.Text
+  hashtags    String[]     @default([])
+  cta         String?
+  category    ClipCategory @default(OTHER)
+
+  score  Float
+  // explicação legível de por que o trecho pontuou — diferencial de confiança do produto
+  reason String? @db.Text
+  // { emotion, energy, humor, hook, retention, ... } normalizado 0..1
+  scoreBreakdown Json @default("{}")
+
+  previewKey   String?
+  thumbnailKey String?
+
+  favorite  Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions ClipVersion[]
+  exports  Export[]
+  feedback ClipFeedback[]
+
+  @@index([projectId, score(sort: Desc)])
+  @@index([projectId, startMs])
+  @@index([projectId, favorite])
+}
+
+/// Edição não destrutiva: cada versão é um documento declarativo de operações.
+/// O render aplica o documento sobre a mídia original; nada é sobrescrito.
+model ClipVersion {
+  id     String @id @default(cuid())
+  clipId String
+
+  version Int
+  label   String?
+
+  // { trim, crop, zooms[], captions{style,...}, overlays[], audio{}, effects[] }
+  editDocument Json @default("{}")
+
+  createdAt DateTime @default(now())
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@unique([clipId, version])
+}
+
+model ClipFeedback {
+  id     String @id @default(cuid())
+  clipId String
+  userId String
+
+  // sinal de treino para calibrar o motor de score
+  useful    Boolean
+  published Boolean @default(false)
+  views     Int?
+  likes     Int?
+  note      String?
+
+  createdAt DateTime @default(now())
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clipId, userId])
+}
+
+// ──────────────────────────────────────────────────────────────── exports ──
+
+enum ExportStatus {
+  QUEUED
+  RENDERING
+  COMPLETED
+  FAILED
+}
+
+enum AspectRatio {
+  VERTICAL_9_16
+  SQUARE_1_1
+  HORIZONTAL_16_9
+}
+
+enum CaptionStyle {
+  NONE
+  HORMOZI
+  MRBEAST
+  CAPCUT
+  TIKTOK
+  GAMING
+  MINIMAL
+  PODCAST
+  ANIME
+}
+
+model Export {
+  id     String @id @default(cuid())
+  clipId String
+  userId String
+
+  aspectRatio  AspectRatio  @default(VERTICAL_9_16)
+  resolution   String       @default("1080p") // 1080p | 1440p | 2160p
+  fps          Int          @default(30)
+  captionStyle CaptionStyle @default(HORMOZI)
+  // snapshot do EditDocument no momento da exportação — reprodutibilidade
+  editSnapshot Json         @default("{}")
+
+  status     ExportStatus @default(QUEUED)
+  progress   Float        @default(0)
+  storageKey String?
+  sizeBytes  BigInt?
+  durationMs Int?
+  errorCode  String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([clipId])
+  @@index([status])
+}
+
+// ──────────────────────────────────────────────────────────────── billing ──
+
+enum LedgerKind {
+  GRANT
+  RESERVE
+  COMMIT
+  RELEASE
+  PURCHASE
+  REFUND
+}
+
+/// Ledger append-only. Saldo = SUM(amount).
+/// Nada de `UPDATE credits = credits - x`: isso perde escritas sob concorrência.
+model CreditLedger {
+  id     String     @id @default(cuid())
+  userId String
+  kind   LedgerKind
+
+  amount      Int // positivo credita, negativo debita
+  reference   String? // projectId, exportId, stripe session…
+  description String?
+  metadata    Json    @default("{}")
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([reference])
+}
+
+// ─────────────────────────────────────────────────────────────── webhooks ──
+
+model WebhookEndpoint {
+  id     String @id @default(cuid())
+  userId String
+
+  url     String
+  secret  String
+  events  String[] @default([])
+  active  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([userId])
+}
+
+model WebhookDelivery {
+  id         String @id @default(cuid())
+  endpointId String
+
+  event        String
+  payload      Json
+  statusCode   Int?
+  attempts     Int      @default(0)
+  deliveredAt  DateTime?
+  lastError    String?
+  createdAt    DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt(sort: Desc)])
+}
+
+// ──────────────────────────────────────────────────────────────── auditing ──
+
+model AuditLog {
+  id     String  @id @default(cuid())
+  userId String?
+
+  action     String
+  resource   String
+  resourceId String?
+  ip         String?
+  userAgent  String?
+  metadata   Json    @default("{}")
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([resource, resourceId])
+}

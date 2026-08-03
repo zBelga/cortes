@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+.turbo/
+.DS_Store
+
+# arquivos gerados localmente
+tmp/
+storage/
+models/
+tools/

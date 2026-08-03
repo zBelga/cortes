@@ -1,0 +1,13 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @clipforge/backend exec prisma generate && pnpm --filter @clipforge/backend build"
+
+[deploy]
+startCommand = "pnpm --filter @clipforge/backend start:worker"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Use as mesmas variáveis de ambiente do serviço "api".
+# O worker NÃO precisa de healthcheck (não tem HTTP).
+# No Railway: crie um segundo serviço apontando para o mesmo repo
+# e selecione este arquivo em Settings → Config File Path.

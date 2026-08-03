@@ -1,0 +1,35 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @clipforge/backend exec prisma generate && pnpm --filter @clipforge/backend build"
+
+[deploy]
+startCommand = "pnpm --filter @clipforge/backend start"
+healthcheckPath = "/health/live"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Variáveis de ambiente necessárias no Railway (configure no dashboard):
+#
+# DATABASE_URL          → Supabase → Settings → Database → Connection string (Transaction mode)
+# DIRECT_DATABASE_URL   → Supabase → Settings → Database → Connection string (Session mode)
+# REDIS_URL             → Upstash → console.upstash.com → Details → REDIS_URL
+# STORAGE_DRIVER        → s3
+# STORAGE_ENDPOINT      → https://[account-id].r2.cloudflarestorage.com
+# STORAGE_BUCKET        → clipforge
+# STORAGE_ACCESS_KEY_ID → R2 → Manage API tokens
+# STORAGE_SECRET_ACCESS_KEY
+# STORAGE_PUBLIC_URL    → URL pública do bucket R2
+# STORAGE_REGION        → auto
+# STORAGE_FORCE_PATH_STYLE → true
+# FILE_TOKEN_SECRET     → gere com: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# PUBLIC_API_URL        → https://sua-api.railway.app/api/v1
+# OPENAI_API_KEY        → platform.openai.com/api-keys
+# TRANSCRIPTION_PROVIDER → openai
+# LLM_PROVIDER          → openai
+# AUTH_MODE             → single-user
+# CORS_ORIGINS          → https://seu-frontend.vercel.app
+# NODE_ENV              → production
+# FFMPEG_PATH           → ffmpeg
+# FFPROBE_PATH          → ffprobe
+# YTDLP_PATH            → yt-dlp
