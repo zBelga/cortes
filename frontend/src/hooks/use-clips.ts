@@ -6,6 +6,7 @@ import { queryKeys } from '@/lib/query-keys';
 import type { Clip, Page, TimelinePoint } from '@/types/api';
 
 export interface ClipFilters {
+  [key: string]: unknown;
   minScore?: number;
   category?: string;
   favorite?: boolean;
